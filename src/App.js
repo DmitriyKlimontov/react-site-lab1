@@ -131,12 +131,24 @@ const fetchProducts = async () => {
 };
 
 // --- МОДАЛЬНОЕ ОКНО ---
-const AuthModal = ({ isOpen, onClose, mode, setMode }) => {
+const AuthModal = ({ isOpen, onClose, mode, setMode, setUser }) => {
+  // Добавляем внутренние стейты для полей ввода
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+
   if (!isOpen) return null;
 
-  const handleGoogleLogin = () => {
-    console.log("Интеграция с Google: Перенаправление...");
-    // Здесь вызывается окно Google OAuth
+  const handleAuth = (e) => {
+    e.preventDefault();
+
+    // ЖЕСТКАЯ ПРОВЕРКА (Админские данные)
+    if (email === "admin@admin.com" && password === "admin") {
+      setUser({ name: "Администратор", email: email, isAdmin: true });
+      alert("Вход выполнен успешно!");
+      onClose();
+    } else {
+      alert("Ошибка! Попробуйте: admin@admin.com / admin");
+    }
   };
 
   return (
@@ -149,7 +161,10 @@ const AuthModal = ({ isOpen, onClose, mode, setMode }) => {
           {mode === "login" ? "Вход в кабинет" : "Регистрация"}
         </h2>
 
-        <button className="google-auth-btn" onClick={handleGoogleLogin}>
+        <button
+          className="google-auth-btn"
+          onClick={() => console.log("Google Login")}
+        >
           <img
             src="https://cdn-icons-png.flaticon.com/512/2504/2504739.png"
             alt="G"
@@ -164,18 +179,22 @@ const AuthModal = ({ isOpen, onClose, mode, setMode }) => {
           <span>или почту</span>
         </div>
 
-        <form className="auth-form" onSubmit={(e) => e.preventDefault()}>
+        <form className="auth-form" onSubmit={handleAuth}>
           <input
             type="email"
             placeholder="Ваш Email"
             className="auth-input"
             required
+            value={email}
+            onChange={(e) => setEmail(e.target.value)} // Теперь email определен!
           />
           <input
             type="password"
             placeholder="Пароль"
             className="auth-input"
             required
+            value={password}
+            onChange={(e) => setPassword(e.target.value)} // Теперь password определен!
           />
           <button type="submit" className="auth-button">
             {mode === "login" ? "Войти" : "Продолжить"}
@@ -197,11 +216,25 @@ const AuthModal = ({ isOpen, onClose, mode, setMode }) => {
 };
 
 // --- КАРТОЧКА ТОВАРА ---
-const ProductCard = ({ product }) => {
+const ProductCard = ({ product, isAdmin, onEdit, onDelete }) => {
   return (
     <div className="product-card">
       <div className="product-image-wrapper">
         <img src={product.image} alt={product.name} className="product-image" />
+        {/* Кнопки админа поверх картинки */}
+        {isAdmin && (
+          <div className="admin-controls-overlay">
+            <button onClick={() => onEdit(product)} className="admin-btn edit">
+              ✎
+            </button>
+            <button
+              onClick={() => onDelete(product.id)}
+              className="admin-btn delete"
+            >
+              ✕
+            </button>
+          </div>
+        )}
         <button className="favorite-btn">
           <Heart size={18} />
         </button>
@@ -226,15 +259,140 @@ const ProductCard = ({ product }) => {
   );
 };
 
+const ProductFormModal = ({ isOpen, onClose, onSave, product }) => {
+  const [formData, setFormData] = React.useState({
+    name: "",
+    price: "",
+    rating: 4.5,
+    reviews: 0,
+    image: "",
+  });
+
+  React.useEffect(() => {
+    if (product) {
+      setFormData(product);
+    } else {
+      setFormData({ name: "", price: "", rating: 4.5, reviews: 0, image: "" });
+    }
+  }, [product, isOpen]);
+
+  if (!isOpen) return null;
+
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal-content" onClick={(e) => e.stopPropagation()}>
+        <button className="modal-close" onClick={onClose}>
+          <X size={24} />
+        </button>
+        <h2 className="modal-title">
+          {product ? "Редактировать товар" : "Добавить новый товар"}
+        </h2>
+        <form
+          className="auth-form"
+          onSubmit={(e) => {
+            e.preventDefault();
+            onSave(formData);
+          }}
+        >
+          <input
+            type="text"
+            placeholder="Название товара"
+            className="auth-input"
+            required
+            value={formData.name}
+            onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+          />
+          <input
+            type="number"
+            placeholder="Цена (₽)"
+            className="auth-input"
+            required
+            value={formData.price}
+            onChange={(e) =>
+              setFormData({ ...formData, price: e.target.value })
+            }
+          />
+          <input
+            type="text"
+            placeholder="Ссылка на изображение (URL)"
+            className="auth-input"
+            required
+            value={formData.image}
+            onChange={(e) =>
+              setFormData({ ...formData, image: e.target.value })
+            }
+          />
+          <button type="submit" className="auth-button">
+            {product ? "Сохранить изменения" : "Добавить в базу"}
+          </button>
+        </form>
+      </div>
+    </div>
+  );
+};
+
 // --- ГЛАВНОЕ ПРИЛОЖЕНИЕ ---
 const EcommerceApp = () => {
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
   const [authMode, setAuthMode] = useState("login");
+  const [user, setUser] = useState(null);
+  const [isProductModalOpen, setIsProductModalOpen] = useState(false);
+  const [editingProduct, setEditingProduct] = useState(null);
 
-  const { data: products, isLoading } = useQuery({
+  const {
+    data: products,
+    isLoading,
+    refetch,
+  } = useQuery({
     queryKey: ["products"],
-    queryFn: fetchProducts,
+    queryFn: async () => {
+      const res = await fetch("http://localhost:5000/api/products");
+      return res.json();
+    },
   });
+
+  // Сохранение / Обновление (CRUD)
+  const handleSaveProduct = async (formData) => {
+    const method = editingProduct ? "PUT" : "POST";
+    const url = editingProduct
+      ? `http://localhost:5000/api/products/${editingProduct.id}`
+      : "http://localhost:5000/api/products";
+
+    await fetch(url, {
+      method,
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(formData),
+    });
+
+    refetch(); // Перезагружаем список товаров из БД
+    setEditingProduct(null);
+  };
+
+  // Удаление (CRUD)
+  const handleDeleteProduct = async (id) => {
+    if (window.confirm("Удалить этот товар из БД?")) {
+      await fetch(`http://localhost:5000/api/products/${id}`, {
+        method: "DELETE",
+      });
+      refetch();
+    }
+  };
+
+  const handleLogin = async (email, password) => {
+    const res = await fetch("http://localhost:5000/api/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email, password }),
+    });
+
+    const data = await res.json();
+    if (data.success) {
+      setUser(data.user);
+      setIsAuthModalOpen(false);
+    } else {
+      alert("Ошибка доступа");
+    }
+  };
 
   const openAuth = (mode) => {
     setAuthMode(mode);
@@ -243,25 +401,45 @@ const EcommerceApp = () => {
 
   return (
     <div className="app">
-      {/* Навигация */}
       <nav className="navbar">
         <div className="nav-container">
           <div className="logo">
-            <Hammer size={28} color="#FF6B35" />{" "}
+            <Hammer size={28} color="#FF6B35" />
             <span>
               СТРОЙ<strong>МАСТЕР</strong>
             </span>
           </div>
           <div className="nav-actions">
-            <button className="nav-btn-text" onClick={() => openAuth("login")}>
-              <LogIn size={20} /> Войти
-            </button>
-            <button
-              className="nav-btn-primary"
-              onClick={() => openAuth("register")}
-            >
-              Регистрация
-            </button>
+            {/* ЕСЛИ ПОЛЬЗОВАТЕЛЬ ВОШЕЛ — ПОКАЗЫВАЕМ ИМЯ, ИНАЧЕ — КНОПКИ */}
+            {user ? (
+              <div
+                style={{ display: "flex", alignItems: "center", gap: "10px" }}
+              >
+                <User size={20} />
+                <span>{user.name}</span>
+                <button
+                  onClick={() => setUser(null)}
+                  className="auth-switch-btn"
+                >
+                  Выйти
+                </button>
+              </div>
+            ) : (
+              <>
+                <button
+                  className="nav-btn-text"
+                  onClick={() => openAuth("login")}
+                >
+                  <LogIn size={20} /> Войти
+                </button>
+                <button
+                  className="nav-btn-primary"
+                  onClick={() => openAuth("register")}
+                >
+                  Регистрация
+                </button>
+              </>
+            )}
           </div>
         </div>
       </nav>
@@ -277,25 +455,70 @@ const EcommerceApp = () => {
 
       {/* Товары */}
       <section className="products-section">
-        <h2 className="section-title">Популярные товары</h2>
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+            marginBottom: "25px", // Добавили отступ снизу для красоты
+          }}
+        >
+          <h2 className="section-title" style={{ margin: 0 }}>
+            Популярные товары
+          </h2>
+          {user?.isAdmin && (
+            <button
+              className="nav-btn-primary"
+              onClick={() => {
+                setEditingProduct(null);
+                setIsProductModalOpen(true);
+              }}
+            >
+              + Добавить товар
+            </button>
+          )}
+        </div>
+
         {isLoading ? (
           <div className="loading-state">
             <div className="spinner"></div>
           </div>
         ) : (
           <div className="products-grid">
-            {products?.map((product) => (
-              <ProductCard key={product.id} product={product} />
-            ))}
+            {Array.isArray(products) ? (
+              products.map((product) => (
+                <ProductCard
+                  key={product.id}
+                  product={product}
+                  isAdmin={user?.isAdmin}
+                  onEdit={(p) => {
+                    setEditingProduct(p);
+                    setIsProductModalOpen(true);
+                  }}
+                  onDelete={handleDeleteProduct}
+                />
+              ))
+            ) : (
+              <p>Товары временно недоступны или произошла ошибка сервера.</p>
+            )}
           </div>
         )}
       </section>
+      {isProductModalOpen && (
+        <ProductFormModal
+          isOpen={isProductModalOpen}
+          product={editingProduct}
+          onClose={() => setIsProductModalOpen(false)}
+          onSave={handleSaveProduct}
+        />
+      )}
 
       <AuthModal
         isOpen={isAuthModalOpen}
         onClose={() => setIsAuthModalOpen(false)}
         mode={authMode}
         setMode={setAuthMode}
+        setUser={setUser}
       />
 
       <style>{`
